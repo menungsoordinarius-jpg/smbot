@@ -1,0 +1,5 @@
+node_modules/
+session/
+temp_*.mp4
+*.save
+*.log

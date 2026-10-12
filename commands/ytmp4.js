@@ -41,7 +41,7 @@ function cookieArgs() {
 }
 
 async function getThumb(id) {
-  for (const q of ['maxresdefault', 'sddefault', 'hqdefault']) {
+  for (const q of ['maxresdefault', 'hq720', 'mqdefault']) {
     try {
       const r = await fetch(`https://i.ytimg.com/vi/${id}/${q}.jpg`);
       if (r.ok) return Buffer.from(await r.arrayBuffer());
@@ -49,6 +49,7 @@ async function getThumb(id) {
   }
   return null;
 }
+
 async function uploadThumb(sock, buf) {
   if (!buf) return undefined;
   try {
@@ -56,6 +57,7 @@ async function uploadThumb(sock, buf) {
       { image: buf },
       { upload: sock.waUploadToServer, mediaTypeOverride: 'thumbnail-link' }
     );
+    console.log('THUMB:', imageMessage.width, imageMessage.height);
     return imageMessage;
   } catch (e) {
     console.error('uploadThumb gagal:', e.message);

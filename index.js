@@ -8,6 +8,9 @@ const handleViewOnce = require('./commands/viewonce');
 const autoSaveViewOnce = require('./commands/autosave');
 const handleGet = require('./commands/get');
 const { handleYtmp4, handleYtReply } = require('./commands/ytmp4');
+const { handleWamark } = require('./commands/wamark');
+const { handleSticker } = require('./commands/sticker')
+const { withReaction } = require('./utils/react');
 
 async function startBot() {
     const { state, saveCreds } = await useMultiFileAuthState('session');
@@ -21,7 +24,7 @@ async function startBot() {
 const originalSendMessage = sock.sendMessage;
 sock.sendMessage = async (...args) => {
     // Memberi jeda 1.5 detik (1500 milidetik) sebelum pesan terkirim
-    await new Promise(resolve => setTimeout(resolve, 1500)); 
+    if (!args[1]?.react) await new Promise(resolve => setTimeout(resolve, 1500));
     return originalSendMessage.apply(sock, args);
 };
 
@@ -71,20 +74,23 @@ sock.ev.on('messages.upsert', async ({ messages, type }) => {
 
     // ROUTER COMMANDS
     if (text.startsWith('.menu 2') || text.startsWith('.help')) {
-        await handleMenu(sock, from, m);
+        await withReaction(sock, m, () => handleMenu(sock, from, m));
     }
     else if (text.startsWith('.tr ')) {
-        await handleTranslate(sock, from, m, text);
+        await withReaction(sock, m, () => handleTranslate(sock, from, m, text));
     }
     else if (/^\.(toimg|tomp4|tvideo|gif|togif)(\s|$)/i.test(text)) {
-        await handleViewOnce(sock, from, m, text);
+        await withReaction(sock, m, () => handleViewOnce(sock, from, m, text));
     }
     else if (text.startsWith('.ytmp4')) {
-        await handleYtmp4(sock, m, text.split(/\s+/).slice(1));
+        await withReaction(sock, m, () => handleYtmp4(sock, m, text.split(/\s+/).slice(1)));
     }
-else {
-    await handleYtReply(sock, m, text);
-}
+    else if (/^\.(s|smeme)(\s|$)/i.test(text)) {
+        await withReaction(sock, m, () => handleSticker(sock, m));
+    }
+    else {
+        await handleYtReply(sock, m, text);
+    }
 //    else if (text.startsWith('.get ')) {
 //        await handleGet(sock, from, m, text);
 //    }
@@ -93,3 +99,4 @@ else {
 }
 
 startBot();
+	

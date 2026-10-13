@@ -11,6 +11,7 @@ const { handleYtmp4, handleYtReply } = require('./commands/ytmp4');
 const { handleWamark } = require('./commands/wamark');
 const { handleSticker } = require('./commands/sticker')
 const { withReaction } = require('./utils/react');
+const { handlePin } = require('./commands/pin')
 
 async function startBot() {
     const { state, saveCreds } = await useMultiFileAuthState('session');
@@ -69,6 +70,8 @@ sock.ev.on('messages.upsert', async ({ messages, type }) => {
         m.message.extendedTextMessage?.text ||
         m.message.imageMessage?.caption ||
         m.message.videoMessage?.caption ||
+        m.message.documentMessage?.caption ||
+        m.message.documentWithCaptionMessage?.message?.documentMessage?.caption ||
         '';
     const from = m.key.remoteJid;
 
@@ -87,6 +90,9 @@ sock.ev.on('messages.upsert', async ({ messages, type }) => {
     }
     else if (/^\.(s|smeme)(\s|$)/i.test(text)) {
         await withReaction(sock, m, () => handleSticker(sock, m));
+    }
+    else if (/^\.pin(\s|$)/i.test(text)) {
+        await withReaction(sock, m, () => handlePin(sock, m, text), '🔍');
     }
     else {
         await handleYtReply(sock, m, text);

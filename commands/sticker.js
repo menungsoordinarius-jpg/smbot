@@ -12,7 +12,7 @@
 // Butuh: pkg install ffmpeg
 // Font teks meme: <folder bot>/assets/font/fontmeme.ttf (file ini ada di commands/, jadi path-nya ../assets/font)
 
-const VERSION = '2026-10-12-r5'
+const VERSION = '2026-10-12-r6'
 console.log('[sticker.js] dimuat, versi', VERSION)
 
 const { downloadMediaMessage } = require('@whiskeysockets/baileys')
@@ -96,9 +96,8 @@ function wrap(text, max = 18) {
   return lines.join('\n')
 }
 
-function drawText(file, position, lineCount) {
-  const size = lineCount > 2 ? 34 : 44
-  const y = position === 'top' ? '16' : 'h-text_h-16'
+function drawText(file, position, size, margin = 16) {
+  const y = position === 'top' ? String(margin) : `h-text_h-${margin}`
   const font = FONT ? `fontfile=${FONT}:` : ''
   return (
     `drawtext=${font}textfile=${file}:expansion=none:fontsize=${size}:` +
@@ -124,7 +123,7 @@ function buildFilter({ full, top, bottom, tmpFiles, animated, alpha, fps }) {
     const tf = path.join(os.tmpdir(), `smeme_${Date.now()}_${pos}.txt`)
     fs.writeFileSync(tf, wrapped)
     tmpFiles.push(tf)
-    f.push(drawText(tf, pos, wrapped.split('\n').length))
+    f.push(drawText(tf, pos, wrapped.split('\n').length > 2 ? 34 : 44))
   }
   if (animated) f.push(`fps=${fps || 15}`)
   return f.join(',')
@@ -150,6 +149,61 @@ async function toWebp(input, { animated, full, top, bottom, alpha, fps, inputArg
     return buf
   } finally {
     for (const f of tmpFiles) fs.existsSync(f) && fs.unlinkSync(f)
+  }
+}
+
+// ukuran video/gambar (untuk menentukan besar font)
+function probeSize(file) {
+  return new Promise((resolve) =>
+    execFile(
+      'ffprobe',
+      ['-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=width,height', '-of', 'csv=p=0:s=x', file],
+      (err, out) => {
+        if (err) return resolve({ w: 720, h: 720 })
+        const [w, h] = String(out).trim().split('x').map(Number)
+        resolve({ w: w || 720, h: h || 720 })
+      }
+    )
+  )
+}
+
+// .smeme pada gambar/video/GIF: teks ditempel, hasilnya tetap berupa gambar/video (bukan stiker)
+async function memeMedia(input, { type, top, bottom }) {
+  const isVideo = type === 'video'
+  const out = path.join(os.tmpdir(), `meme_${Date.now()}.${isVideo ? 'mp4' : 'jpg'}`)
+  const tmpFiles = [out]
+  try {
+    const { w, h } = await probeSize(input)
+    const sw = Math.min(w, 720)
+    const sh = Math.round((h * sw) / w)
+    const size = Math.max(18, Math.round(Math.min(sw, sh) / 12))
+    const margin = Math.round(size * 0.35)
+    const maxChars = Math.max(8, Math.floor(sw / (size * 0.68)))
+
+    const f = ['scale=trunc(min(iw\\,720)/2)*2:-2']
+    for (const [pos, text] of [['top', top], ['bottom', bottom]]) {
+      if (!text) continue
+      const tf = path.join(os.tmpdir(), `smemem_${Date.now()}_${pos}.txt`)
+      fs.writeFileSync(tf, wrap(text, maxChars))
+      tmpFiles.push(tf)
+      f.push(drawText(tf, pos, size, margin))
+    }
+
+    const args = ['-y', '-i', input, '-vf', f.join(',')]
+    if (isVideo) {
+      args.push(
+        '-t', '60',
+        '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '28', '-pix_fmt', 'yuv420p',
+        '-c:a', 'aac', '-b:a', '96k', '-movflags', '+faststart'
+      )
+    } else {
+      args.push('-frames:v', '1', '-q:v', '3')
+    }
+    args.push(out)
+    await run(args)
+    return { kind: isVideo ? 'video' : 'image', buffer: fs.readFileSync(out) }
+  } finally {
+    for (const t of tmpFiles) fs.existsSync(t) && fs.unlinkSync(t)
   }
 }
 
@@ -204,32 +258,42 @@ async function stickerToWebp(buffer, input, opts) {
   }
 }
 
+// dokumen (file) yang isinya gambar/video/GIF
+function docType(message) {
+  const d =
+    message?.documentMessage ||
+    message?.documentWithCaptionMessage?.message?.documentMessage
+  const mime = d?.mimetype || ''
+  if (/^image\/gif$/i.test(mime)) return { type: 'video', gif: true }
+  if (/^video\//i.test(mime)) return { type: 'video', gif: false }
+  if (/^image\/webp$/i.test(mime)) return null
+  if (/^image\//i.test(mime)) return { type: 'image', gif: false }
+  return null
+}
+
 // cari media: dari pesan yang di-reply, atau dari pesan itu sendiri (caption)
 function findMedia(msg) {
   const m = msg.message || {}
   const ctx = m.extendedTextMessage?.contextInfo
   const q = ctx?.quotedMessage
   if (q) {
-    const type = q.imageMessage
-      ? 'image'
-      : q.videoMessage
-      ? 'video'
-      : q.stickerMessage
-      ? 'sticker'
-      : null
-    if (type) {
-      return {
-        type,
-        animated: type === 'sticker' ? !!q.stickerMessage.isAnimated : type === 'video',
-        target: {
-          key: { remoteJid: msg.key.remoteJid, id: ctx.stanzaId, participant: ctx.participant },
-          message: q
-        }
-      }
+    const target = {
+      key: { remoteJid: msg.key.remoteJid, id: ctx.stanzaId, participant: ctx.participant },
+      message: q
     }
+    if (q.imageMessage) return { type: 'image', animated: false, gif: false, target }
+    if (q.videoMessage)
+      return { type: 'video', animated: true, gif: !!q.videoMessage.gifPlayback, target }
+    if (q.stickerMessage)
+      return { type: 'sticker', animated: !!q.stickerMessage.isAnimated, gif: false, target }
+    const qd = docType(q)
+    if (qd) return { type: qd.type, animated: qd.type === 'video', gif: qd.gif, target }
   }
-  if (m.imageMessage) return { type: 'image', animated: false, target: msg }
-  if (m.videoMessage) return { type: 'video', animated: true, target: msg }
+  if (m.imageMessage) return { type: 'image', animated: false, gif: false, target: msg }
+  if (m.videoMessage)
+    return { type: 'video', animated: true, gif: !!m.videoMessage.gifPlayback, target: msg }
+  const d = docType(m)
+  if (d) return { type: d.type, animated: d.type === 'video', gif: d.gif, target: msg }
   return null
 }
 
@@ -240,6 +304,8 @@ function getBody(msg) {
     m.extendedTextMessage?.text ||
     m.imageMessage?.caption ||
     m.videoMessage?.caption ||
+    m.documentMessage?.caption ||
+    m.documentWithCaptionMessage?.message?.documentMessage?.caption ||
     ''
   ).trim()
 }
@@ -266,7 +332,7 @@ async function handleSticker(sock, msg) {
     await reply(
       cmd === 's'
         ? 'Reply gambar/video dengan *.s* (atau *.s full*). Reply stiker dengan *.s pack | author* untuk ganti watermark.'
-        : 'Reply gambar/video/stiker dengan *.smeme teks atas | teks bawah*.'
+        : 'Reply gambar/video/GIF/stiker dengan *.smeme teks atas | teks bawah*.'
     )
     return false
   }
@@ -291,14 +357,10 @@ async function handleSticker(sock, msg) {
       if (a) author = a.slice(0, 40)
     }
   } else {
-    // format: .smeme [full] teks | teks
-    let rest = arg
-    if (/^full(\s|$)/i.test(rest)) {
-      full = true
-      rest = rest.replace(/^full\s*/i, '')
-    }
+    // format: .smeme teks | teks   (tanpa | -> teks di bawah)
+    const rest = arg
     if (!rest) {
-      await reply('Contoh: *.smeme halo | dunia* atau *.smeme full halo | dunia*')
+      await reply('Contoh: *.smeme halo | dunia*')
       return false
     }
     if (!rest.includes('|')) {
@@ -321,27 +383,40 @@ async function handleSticker(sock, msg) {
   const input = path.join(os.tmpdir(), `in_${Date.now()}.${ext}`)
   try {
     const buffer = await downloadMediaMessage(media.target, 'buffer', {})
-    let finalSticker
-    if (isSticker && cmd === 's') {
-      // reply stiker + .s -> hanya ganti watermark (pack/author), gambar tetap
-      finalSticker = await addExif(buffer, pack, author)
+    if (cmd === 'smeme' && !isSticker) {
+      // gambar/video/GIF/dokumen + .smeme -> hasil tetap gambar/video, bukan stiker
+      fs.writeFileSync(input, buffer)
+      const r = await memeMedia(input, { type: media.type, top, bottom })
+      await sock.sendMessage(
+        from,
+        r.kind === 'video' ? { video: r.buffer, gifPlayback: !!media.gif } : { image: r.buffer },
+        { quoted: msg }
+      )
     } else {
-      const opts = { animated: media.animated, full, top, bottom, alpha: isSticker }
-      let webp
-      if (isSticker) {
-        webp = await stickerToWebp(buffer, input, opts)
+      let finalSticker
+      if (isSticker && cmd === 's') {
+        // reply stiker + .s -> hanya ganti watermark (pack/author), gambar tetap
+        finalSticker = await addExif(buffer, pack, author)
       } else {
-        fs.writeFileSync(input, buffer)
-        webp = await toWebp(input, opts)
+        const opts = { animated: media.animated, full, top, bottom, alpha: isSticker }
+        let webp
+        if (isSticker) {
+          webp = await stickerToWebp(buffer, input, opts)
+        } else {
+          fs.writeFileSync(input, buffer)
+          webp = await toWebp(input, opts)
+        }
+        finalSticker = await addExif(webp, pack, author)
       }
-      finalSticker = await addExif(webp, pack, author)
+      await sock.sendMessage(from, { sticker: finalSticker }, { quoted: msg })
     }
-    await sock.sendMessage(from, { sticker: finalSticker }, { quoted: msg })
   } catch (e) {
     console.error('[sticker] GAGAL:', e.message)
     ok = false
     await reply(
-      isSticker
+      cmd === 'smeme' && !isSticker
+        ? 'Gagal menambahkan teks. Pastikan ffmpeg terpasang (pkg install ffmpeg).'
+        : isSticker
         ? 'Gagal memproses stiker. Pastikan terpasang: pkg install ffmpeg libwebp'
         : 'Gagal membuat stiker. Pastikan ffmpeg terpasang (pkg install ffmpeg).'
     )

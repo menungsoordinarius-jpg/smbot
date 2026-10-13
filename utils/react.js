@@ -14,8 +14,8 @@ async function react(sock, m, emoji) {
 
 // task: fungsi async yang menjalankan handler.
 // Dianggap gagal kalau melempar error atau mengembalikan false.
-async function withReaction(sock, m, task) {
-  await react(sock, m, '⏳')
+async function withReaction(sock, m, task, startEmoji = '⏳') {
+  await react(sock, m, startEmoji)
   let ok = true
   try {
     const result = await task()

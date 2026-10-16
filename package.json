@@ -16,6 +16,7 @@
     "jimp": "^0.22.12",
     "node-webpmux": "^3.2.1",
     "qrcode-terminal": "^0.12.0",
+    "tesseract.js": "^5.1.1",
     "translate-google": "^1.5.0"
   }
 }

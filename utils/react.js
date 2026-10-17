@@ -28,4 +28,4 @@ async function withReaction(sock, m, task, startEmoji = '⏳') {
   setTimeout(() => react(sock, m, ''), CLEAR_AFTER_MS) // '' = hapus reaksi
 }
 
-module.exports = { withReaction }
+module.exports = { withReaction, react }

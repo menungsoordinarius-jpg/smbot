@@ -1,11 +1,13 @@
 const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
 const qrcode = require('qrcode-terminal');
+const { claim } = require('./utils/claim');
 
 // Semua perintah ada di commands/commands.js
 const handleCommands = require('./commands/commands');
 
 async function startBot() {
-    const { state, saveCreds } = await useMultiFileAuthState('session');
+const SESSION = process.env.SESSION_DIR || 'session';
+const { state, saveCreds } = await useMultiFileAuthState(SESSION);
 
     const sock = makeWASocket({
         auth: state,
@@ -44,6 +46,10 @@ async function startBot() {
         if (type !== 'notify') return;
         const m = messages[0];
         if (!m?.message) return;
+        const msg = m.message;
+        const text = msg.conversation || msg.extendedTextMessage?.text
+        || msg.imageMessage?.caption || msg.videoMessage?.caption || '';
+        if (text.trim().startsWith('.') && !claim(m)) return;
         try {
             await handleCommands(sock, m);
         } catch (e) {

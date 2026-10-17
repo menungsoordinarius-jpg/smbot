@@ -13,6 +13,7 @@
   "dependencies": {
     "@whiskeysockets/baileys": "^7.0.0-rc14",
     "axios": "^1.20.0",
+    "btch-downloader": "^6.4.0",
     "jimp": "^0.22.12",
     "node-webpmux": "^3.2.1",
     "qrcode-terminal": "^0.12.0",

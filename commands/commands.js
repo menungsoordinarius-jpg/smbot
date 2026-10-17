@@ -16,6 +16,8 @@ const status = require('./status');
 const handleTomp3 = require('./converter/tomp3');
 const { handleAlbum } = require('./sticker/stickerpack');
 const ocr = require('./ocr');
+const xDownloader = require('./downloader/x/x')
+const instagram = require('./downloader/instagram');
 
 module.exports = async function handleCommands(sock, m) {
     // === DEBUG SEMENTARA (hapus kalau sudah tidak perlu) ===
@@ -73,6 +75,18 @@ module.exports = async function handleCommands(sock, m) {
     else if (/^\.ocr(\s|$)/i.test(text)) {
         await withReaction(sock, m, () => ocr(sock, m, text.split(/\s+/).slice(1)), '🔍');
     }
+    else if (/^\.(x|𝕏|twitter)(\s|$)/i.test(text)) {
+        const isDetail = /^\.(𝕏|twitter)/i.test(text);
+        await withReaction(sock, m, () => xDownloader(sock, m, text.split(/\s+/).slice(1), isDetail), '🔎');
+    }
+    else if (/^\.(ins|instagram)(\s|$)/i.test(text)) {
+        const isDetail = /^\.instagram/i.test(text);
+        await withReaction(
+            sock, m,
+            () => instagram(sock, m, text.split(/\s+/).slice(1), isDetail ? 'full' : 'short'),
+            '🔎'
+        );
+    }
     else {
         await handleYtReply(sock, m, text);
     }
@@ -80,3 +94,4 @@ module.exports = async function handleCommands(sock, m) {
     //     await handleGet(sock, from, m, text);
     // }
 };
+

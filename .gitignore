@@ -3,3 +3,9 @@ session/
 temp_*.mp4
 *.save
 *.log
+session/
+session_*/
+data/
+session_*/
+k.txt
+test.mp4

@@ -1,7 +1,7 @@
 #!/bin/bash
 cd "$(dirname "$0")" || exit 1
 
-EXCL='(^|/)(\.git|node_modules|session)(/|$)|autopush\.log|/tmp_|\.swp$|\.save$|~$'
+EXCL='(^|/)(\.git|node_modules|session[^/]*)(/|$)|autopush\.log|/tmp_|\.swp$|\.save$|~$'
 n=0
 
 while inotifywait -r -q -e modify,create,delete,move --exclude "$EXCL" . >/dev/null; do

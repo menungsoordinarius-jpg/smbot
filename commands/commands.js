@@ -9,7 +9,9 @@ const autoSaveViewOnce = require('./autosave');
 // const handleGet = require('./get');
 const { handleYtmp4, handleYtReply } = require('./ytmp4');
 // const { handleWamark } = require('./wamark');
+// sticker
 const { handleSticker } = require('./sticker');
+const { handleSmeme } = require('./sticker/smeme');
 const { handlePin } = require('./pin');
 const toimage = require('./converter/toimage');
 const { withReaction } = require('../utils/react');
@@ -22,7 +24,8 @@ const instagram = require('./downloader/instagram');
 const tes = require('./tes');
 const { handleDev, handleAdmin } = require('./devSettings');
 const { pixivCommand } = require('./search/pixiv');
-
+// ai
+const gemini = require('./ai/gemini')
 const BASE = 'https://menungsoordinarius-jpg.github.io/smbot/images/';
 
 const PREVIEW = {
@@ -67,6 +70,10 @@ module.exports = async function handleCommands(sock, m) {
     // ROUTER COMMANDS
     if (text.startsWith('.menu 2') || text.startsWith('.help')) {
         await withReaction(sock, m, () => handleMenu(sock, from, m));
+   }
+// ai
+    else if (/^\.ai(\s|$)/i.test(text)) {
+        await withReaction(sock, m, () => gemini.command(sock, m, text.split(/\s+/).slice(1)), '🤖');
     }
     else if (/^\.dev(\s|$)/i.test(text)) {
     await handleDev(sock, from, m, text);
@@ -88,8 +95,11 @@ module.exports = async function handleCommands(sock, m) {
         await withReaction(sock, m, () => handleYtmp4(sock, m, text.split(/\s+/).slice(1)));
     }
 // sticker
-    else if (/^\.(s|smeme)(\s|$)/i.test(text)) {
+    else if (/^\.s(\s|$)/i.test(text)) {
         await withReaction(sock, m, () => handleSticker(sock, m));
+    }
+    else if (/^\.smeme(\s|$)/i.test(text)) {
+        await withReaction(sock, m, () => handleSmeme(sock, m));
     }
 // search
     else if (/^\.pin(\s|$)/i.test(text)) {

@@ -1,7 +1,7 @@
 
 // commands/commands.js
 // Router semua perintah smbot. index.js hanya untuk login/koneksi.
-
+const settings = require('../utils/settings');
 const handleMenu = require('./menu');
 const handleTranslate = require('./translate');
 const handleViewOnce = require('./viewonce');
@@ -23,6 +23,8 @@ const xDownloader = require('./downloader/x/x')
 const instagram = require('./downloader/instagram');
 const tes = require('./tes');
 const { handleDev, handleAdmin } = require('./devSettings');
+// search
+const instagramSearch = require('./search/instagram-search');
 const { pixivCommand } = require('./search/pixiv');
 // ai
 const gemini = require('./ai/gemini')
@@ -67,10 +69,16 @@ module.exports = async function handleCommands(sock, m) {
         '';
     const from = m.key.remoteJid;
 
+    if (await settings.handleReply(sock, m, text)) return;
+
     // ROUTER COMMANDS
     if (text.startsWith('.menu 2') || text.startsWith('.help')) {
         await withReaction(sock, m, () => handleMenu(sock, from, m));
-   }
+    }
+// settings
+else if (/^\.(settings|setting)(\s|$)/i.test(text)) {
+    await settings.show(sock, m);
+}
 // ai
     else if (/^\.ai(\s|$)/i.test(text)) {
         await withReaction(sock, m, () => gemini.command(sock, m, text.split(/\s+/).slice(1)), '🤖');
@@ -122,11 +130,17 @@ module.exports = async function handleCommands(sock, m) {
         const isDetail = /^\.(𝕏|twitter)/i.test(text);
         await withReaction(sock, m, () => xDownloader(sock, m, text.split(/\s+/).slice(1), isDetail), '🔎');
     }
-    else if (/^\.(ins|instagram)(\s|$)/i.test(text)) {
-        const isDetail = /^\.instagram/i.test(text);
+    else if (/^\.(instagram|ins|ig)(\s|$)/i.test(text)) {
+        const cmd = text.match(/^\.(instagram|ins|ig)(?=\s|$)/i)[1].toLowerCase();
+        const args = text.split(/\s+/).slice(1);
+        const mode = cmd === 'instagram' ? 'full' : 'short';
+        const isLink = /instagram\.com|instagr\.am/i.test(args.join(' '));
+        const useSearch = cmd !== 'ins' && args.length > 0 && !isLink;
         await withReaction(
             sock, m,
-            () => instagram(sock, m, text.split(/\s+/).slice(1), isDetail ? 'full' : 'short'),
+            () => useSearch
+                ? instagramSearch(sock, m, args, mode)
+                : instagram(sock, m, args, mode),
             '🔎'
         );
     }

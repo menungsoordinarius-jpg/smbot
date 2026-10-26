@@ -5,18 +5,33 @@ const path = require('path');
 const LOCK_DIR = path.join(os.tmpdir(), 'smbot-locks');
 fs.mkdirSync(LOCK_DIR, { recursive: true });
 
-// true = bot ini yang menang dan boleh menjawab
-function claim(m) {
-    const id = `${m.key.remoteJid}_${m.key.id}`.replace(/[^\w.@-]/g, '_');
+const fileOf = (m) =>
+    path.join(LOCK_DIR, `${m.key.remoteJid}_${m.key.id}`.replace(/[^\w.@-]/g, '_'));
+
+// true = bot ini boleh menjawab
+function claim(m, botId, claimOn = true) {
+    const file = fileOf(m);
+
+    if (claimOn) {
+        try {
+            fs.writeFileSync(file, botId, { flag: 'wx' });
+            return true;                       // pertama = menang
+        } catch (e) {
+            if (e.code !== 'EEXIST') return true;
+            try { return fs.readFileSync(file, 'utf8') === botId; }
+            catch { return false; }
+        }
+    }
+
+    // claim OFF: tidak mengklaim, tapi menghormati klaim bot lain
     try {
-        fs.closeSync(fs.openSync(path.join(LOCK_DIR, id), 'wx'));
-        return true;
-    } catch (e) {
-        return e.code !== 'EEXIST';
+        const owner = fs.readFileSync(file, 'utf8');
+        return owner === botId;
+    } catch {
+        return true;                           // belum ada klaim
     }
 }
 
-// bersihkan kunci yang sudah lebih dari 1 menit
 setInterval(() => {
     const now = Date.now();
     for (const f of fs.readdirSync(LOCK_DIR)) {

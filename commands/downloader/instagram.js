@@ -2,9 +2,15 @@
 // .ins LINK        -> media + caption + 👤 @username
 // .instagram LINK  -> media + caption + deskripsi + 👤 *Nama* @username
 //
+// Unduhan memakai sistem segmen paralel ala IDM (utils/segdl.js lewat
+// utils/sendMedia.js): file ditulis ke disk, bukan ke RAM, dan segmen
+// yang putus dilanjutkan dari byte terakhir.
+//
 // Install: npm i btch-downloader   (.npmrc legacy-peer-deps sudah ada)
+// Butuh  : utils/segdl.js dan utils/sendMedia.js
 
 const { igdl } = require('btch-downloader');
+const { sendMediaFile } = require('../../utils/sendMedia');
 
 const UA =
   'Mozilla/5.0 (Linux; Android 13; SM-A065F) AppleWebKit/537.36 ' +
@@ -157,45 +163,22 @@ async function fetchOg(shortcode) {
   return out;
 }
 
-// Ambil daftar URL media (foto/video, termasuk carousel)
+// Ambil daftar URL media (foto/video, termasuk carousel).
+// Link tanpa "/" di ujung dicoba dulu (dengan "/" igdl sering memberi hasil kosong).
 async function fetchMedia(url) {
-  const r = await igdl(url);
-  const list = Array.isArray(r) ? r : r?.result || [];
-  const urls = list.map((x) => x.url).filter(Boolean);
-  return [...new Set(urls)].slice(0, MAX_MEDIA);
-}
-
-// Deteksi tipe file dari byte awal (lebih andal daripada content-type)
-function sniff(buf) {
-  if (buf.length < 12) return null;
-  if (buf[0] === 0xff && buf[1] === 0xd8) return 'image'; // JPEG
-  if (buf.subarray(1, 4).toString() === 'PNG') return 'image';
-  if (buf.subarray(0, 4).toString() === 'RIFF' && buf.subarray(8, 12).toString() === 'WEBP') return 'image';
-  if (buf.subarray(4, 8).toString() === 'ftyp') {
-    const brand = buf.subarray(8, 12).toString();
-    if (['avif', 'heic', 'heix', 'mif1'].includes(brand)) return null;
-    return 'video'; // MP4 / MOV
+  for (const u of [url.replace(/\/$/, ''), url.replace(/\/?$/, '/')]) {
+    try {
+      const r = await igdl(u);
+      const list = Array.isArray(r) ? r : r?.result || [];
+      const urls = [...new Set(list.map((x) => x.url).filter(Boolean))].slice(0, MAX_MEDIA);
+      console.log('[instagram] igdl:', u, '->', urls.length,
+        urls.length ? '' : '| respons: ' + JSON.stringify(r).slice(0, 300));
+      if (urls.length) return urls;
+    } catch (e) {
+      console.log('[instagram] igdl gagal:', u, e.message);
+    }
   }
-  if (buf.subarray(0, 4).toString('hex') === '1a45dfa3') return 'video'; // WebM
-  return null;
-}
-
-// Unduh ke buffer, tentukan tipe dari isi file
-async function download(url) {
-  const res = await fetch(url, { headers: { 'User-Agent': UA } });
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  const buffer = Buffer.from(await res.arrayBuffer());
-  const kind = sniff(buffer);
-  console.log('[instagram] media:', {
-    status: res.status,
-    contentType: res.headers.get('content-type'),
-    size: buffer.length,
-    kind,
-    head: buffer.subarray(0, 80).toString('latin1').replace(/[^\x20-\x7e]/g, '.'),
-    url: url.slice(0, 100),
-  });
-  if (!kind) throw new Error('hasil unduhan bukan foto/video yang valid');
-  return { buffer, isVideo: kind === 'video' };
+  return [];
 }
 
 function buildText(meta, mode) {
@@ -250,10 +233,14 @@ module.exports = async function instagram(sock, m, args, mode = 'short') {
     const text = buildText(meta, mode);
 
     for (let i = 0; i < urls.length; i++) {
-      const { buffer, isVideo } = await download(urls[i]);
-      const content = isVideo ? { video: buffer, mimetype: 'video/mp4' } : { image: buffer };
-      if (i === 0 && text) content.caption = text; // caption hanya di media pertama
-      await sock.sendMessage(jid, content, { quoted: m });
+      try {
+        // caption hanya di media pertama
+        await sendMediaFile(sock, m, urls[i], { caption: i === 0 ? text : undefined });
+      } catch (e) {
+        // gagal di media pertama = gagal total; di media berikutnya = dilewati
+        if (i === 0) throw e;
+        console.log(`[instagram] media ${i + 1} gagal, dilewati:`, e.message);
+      }
     }
   } catch (e) {
     console.log('[instagram] error:', e);

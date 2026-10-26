@@ -3,14 +3,14 @@
 //   .smeme atas | bawah               -> teks atas dan bawah
 //   .smeme atas |                     -> teks atas saja
 //   .smeme --anton HALO | --impact DUNIA
-//   .smeme --anton 10% HALO | --impact DUNIA 20%
-//   .smeme --anton -10% HALO          -> ukuran mengecil 10%
-//   .smeme --default 20% HALO         -> font default, ukuran +20%
+//   .smeme --anton --10 HALO | --impact DUNIA --20   -> ukuran +10% / +20%
+//   .smeme --anton --10- HALO         -> ukuran mengecil 10%
+//   .smeme --20 HALO                  -> font default, ukuran +20%
 // Font default diatur lewat DEFAULT_FONT_NAME di bawah.
 // Hasil mengikuti jenis medianya: gambar -> gambar, video/GIF -> video/GIF, stiker -> stiker.
 // Bisa dari gambar, video, GIF, stiker, dokumen gambar/video (reply, atau media dengan caption command)
 
-const VERSION = '2026-10-23-r11-font'
+const VERSION = '2026-10-29-r12-size-flag'
 console.log('[smeme.js] dimuat, versi', VERSION)
 
 const { downloadMediaMessage } = require('@whiskeysockets/baileys')
@@ -60,15 +60,25 @@ function defaultFontPath() {
   return DEFAULT_FONT_NAME ? findFont(DEFAULT_FONT_NAME) : null
 }
 
-// "--anton 10% TEKS" / "--anton TEKS 20%" -> { text, fontPath, scale, missing }
-// "--default 20% TEKS" -> pakai font default, hanya ubah ukuran
+// "--anton --20 TEKS" / "--anton TEKS --20-" -> { text, fontPath, scale, missing }
+//   --20  = ukuran +20%      --20-  = ukuran -20%
+//   --default --20 TEKS -> pakai font default, hanya ubah ukuran
 function parseSegment(seg) {
   let s = (seg || '').trim()
   let fontPath = null
   let missing = null
   let scale = 1
 
-  const fm = s.match(/(^|\s)--([\w-]+)(?=\s|$)/)
+  // ukuran dibaca dulu: "--20" (besar) atau "--20-" (kecil), di posisi mana saja
+  const sm = s.match(/(^|\s)--(\d+(?:\.\d+)?)(-?)(?=\s|$)/)
+  if (sm) {
+    const pct = parseFloat(sm[2]) * (sm[3] ? -1 : 1)
+    scale = Math.min(3, Math.max(0.3, 1 + pct / 100))
+    s = s.replace(sm[0], ' ').trim()
+  }
+
+  // lalu nama font: "--anton" / "--default"
+  const fm = s.match(/(^|\s)--([A-Za-z][\w-]*)(?=\s|$)/)
   if (fm) {
     if (norm(fm[2]) === 'default') {
       fontPath = defaultFontPath() // boleh null -> font lama stickercore
@@ -77,15 +87,6 @@ function parseSegment(seg) {
       if (!fontPath) missing = fm[2]
     }
     s = s.replace(fm[0], ' ').trim()
-
-    // persen hanya dibaca kalau ada --font, supaya "diskon 50%" aman
-    const pm =
-      s.match(/^([+-]?\d+(?:\.\d+)?)%\s*/) || s.match(/\s*([+-]?\d+(?:\.\d+)?)%$/)
-    if (pm) {
-      scale = 1 + parseFloat(pm[1]) / 100
-      scale = Math.min(3, Math.max(0.3, scale))
-      s = s.replace(pm[0], ' ').trim()
-    }
   }
   return { text: s, fontPath, scale, missing }
 }
@@ -113,9 +114,9 @@ function buildHelp(title) {
     '> `--default` memakai font bawaan bot.',
     '> Teks atas dan bawah boleh memakai font berbeda.',
     '',
-    '10% atau -10%',
-    '> Mengubah ukuran font. `10%` memperbesar 10%, `-10%` mengecilkan 10%.',
-    '> Tulis setelah `--namafont`, di depan atau di belakang teks.',
+    '--20 atau --20-',
+    '> Mengubah ukuran font. `--20` memperbesar 20%, `--20-` mengecilkan 20%.',
+    '> Bebas ditaruh di depan atau di belakang teks, dengan atau tanpa `--namafont`.',
     '> Batas ukuran: -70% sampai +200%.',
     '',
     '*Hasil:*',
@@ -126,7 +127,8 @@ function buildHelp(title) {
     '*Contoh Penggunaan:*',
     '`.smeme teks atas|teks bawah`',
     '`.smeme --anton halo dunia`',
-    '`.smeme --kanit 20% halo|--default dunia -10%`'
+    '`.smeme --20 aaduh`',
+    '`.smeme --kanit --20 halo|--default dunia --10-`'
   ].join('\n')
 }
 

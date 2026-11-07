@@ -11,6 +11,7 @@ const { igdl } = require('btch-downloader');
 const { execFile } = require('child_process');
 const { sendMediaFile } = require('../../utils/sendMedia');
 const { createProcess } = require('../../utils/process');
+const { withProcessReact } = require('../../utils/react');
 
 // ---------- SETTING (dibaca .settings) ----------
 // Jenis media yang ditampilkan.
@@ -240,14 +241,18 @@ async function sendPost(sock, m, shortcode, link, mode, requireMeta = false, pro
   const text = buildText(meta, mode);
 
   for (let i = 0; i < urls.length; i++) {
-    await proc?.update(
-      `📤 Mengirim media ${i + 1}/${urls.length}...`,
-      50 + (45 * i) / urls.length,
-      i === 0
-    );
+    const from = 50 + (45 * i) / urls.length;
+    const to = 50 + (45 * (i + 1)) / urls.length;
+    const no = `${i + 1}/${urls.length}`;
+    await proc?.update(`⬇️ Mengunduh media ${no}`, from, i === 0);
     try {
       // caption hanya di media pertama
-      await sendMediaFile(sock, m, urls[i], { caption: i === 0 ? text : undefined });
+      await sendMediaFile(sock, m, urls[i], {
+        caption: i === 0 ? text : undefined,
+        onProgress: (p) => p.done
+          ? proc?.update(`📤 Mengirim media ${no}...`, to, true)
+          : proc?.download(`⬇️ Mengunduh media ${no}`, p.loaded, p.total, from, to),
+      });
     } catch (e) {
       // gagal di media pertama = gagal total (kandidat lain dicoba);
       // gagal di media berikutnya = lewati saja
@@ -394,7 +399,11 @@ async function searchAndSend(sock, m, keyword, mode) {
   const tampilan = ['video', 'image', 'random'].includes(SETTING_Tampilan_Media)
     ? SETTING_Tampilan_Media
     : 'random';
-  const proc = createProcess(sock, m, SETTING_Tampilkan_Proses);
+  const proc = withProcessReact(
+    createProcess(sock, m, SETTING_Tampilkan_Proses),
+    sock,
+    m
+  );
 
   // Pesan gagal: kalau proses aktif, edit pesan proses (1 pesan saja);
   // kalau proses dimatikan, kirim pesan biasa.
@@ -407,9 +416,10 @@ async function searchAndSend(sock, m, keyword, mode) {
     await proc.update('🔎 Mencari postingan...', 5, true);
     const posts = await searchPosts(keyword, tampilan);
     if (!posts.length) {
-      return gagal(`❌ Tidak ada hasil untuk "${keyword}". Coba kata kunci lain.`);
+      await gagal(`❌ Tidak ada hasil untuk "${keyword}". Coba kata kunci lain.`);
+      return false;
     }
-    await proc.update('✅ Postingan ditemukan', 20, true);
+    await proc.update('🎯 Postingan ditemukan', 20, true);
 
     // Utamakan kandidat yang caption/username-nya terbaca. Kalau semua kosong,
     // kirim satu tanpa caption daripada tidak mengirim apa-apa.
@@ -420,7 +430,7 @@ async function searchAndSend(sock, m, keyword, mode) {
       try {
         await sendPost(sock, m, p.shortcode, p.url, mode, true, proc);
         await proc.done();
-        return;
+        return true;
       } catch (e) {
         console.log('[instagram-search] kandidat gagal:', p.url, e.message);
         if (e.noMeta && !noMeta) noMeta = p;
@@ -432,13 +442,14 @@ async function searchAndSend(sock, m, keyword, mode) {
         await proc.update('🔁 Mencoba tanpa caption...', 20, true);
         await sendPost(sock, m, noMeta.shortcode, noMeta.url, mode, false, proc);
         await proc.done();
-        return;
+        return true;
       } catch (e) {
         console.log('[instagram-search] cadangan tanpa caption gagal:', e.message);
       }
     }
 
     await gagal('❌ Hasil ditemukan tapi gagal diunduh (mungkin privat). Coba kata kunci lain.');
+    return false;
   } catch (e) {
     console.log('[instagram-search] error:', e);
     await gagal(
@@ -446,6 +457,7 @@ async function searchAndSend(sock, m, keyword, mode) {
         ? '❌ Pencarian sedang dibatasi mesin pencari. Coba lagi beberapa menit lagi.'
         : '❌ Pencarian gagal. Coba lagi nanti.'
     );
+    return false;
   }
 }
 
@@ -466,7 +478,8 @@ module.exports = async function instagramSearch(sock, m, args, mode = 'short') {
   }
 
   try {
-    await searchAndSend(sock, m, keyword, mode);
+    // true = berhasil, false = gagal (dibaca withReaction untuk reaksi akhir)
+    return await searchAndSend(sock, m, keyword, mode);
   } catch (e) {
     console.log('[instagram-search] error:', e);
     await sock.sendMessage(
@@ -474,5 +487,6 @@ module.exports = async function instagramSearch(sock, m, args, mode = 'short') {
       { text: 'Pencarian gagal. Coba lagi nanti.' },
       { quoted: m }
     );
+    return false;
   }
 };

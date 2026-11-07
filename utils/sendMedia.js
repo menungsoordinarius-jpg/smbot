@@ -48,6 +48,7 @@ async function sniffFile(file) {
  *   unknownAsDoc    tipe tidak dikenal -> kirim sebagai dokumen (default: lempar error)
  *   quoted          pesan yang di-reply (default m)
  *   jid             tujuan (default m.key.remoteJid)
+ *   onProgress      ({ loaded, total, done }) selama mengunduh; done = true saat unduhan selesai
  * return: { kind, size }
  */
 async function sendMediaFile(sock, m, url, opts = {}) {
@@ -55,10 +56,10 @@ async function sendMediaFile(sock, m, url, opts = {}) {
     caption, headers, connections,
     asDocument = false, fileName = 'file',
     maxVideoMB = 60, unknownAsDoc = false,
-    quoted = m, jid = m.key.remoteJid,
+    quoted = m, jid = m.key.remoteJid, onProgress,
   } = opts;
 
-  const file = await segDownload(url, { headers, connections });
+  const file = await segDownload(url, { headers, connections, onProgress });
   try {
     const info = await sniffFile(file);
     const size = (await fs.promises.stat(file)).size;

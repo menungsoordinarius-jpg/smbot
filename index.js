@@ -1,8 +1,9 @@
 const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
 const qrcode = require('qrcode-terminal');
 const path = require('path');
-const { claim } = require('./utils/claim');
+const { claim } = require('./utils/claim');	
 const settings = require('./utils/settings');
+const { startAlerts } = require('./utils/alert');
 settings.install();
 const CLAIM_FILE = path.join(__dirname, 'commands', 'claim.js');
 
@@ -40,20 +41,23 @@ const { state, saveCreds } = await useMultiFileAuthState(SESSION);
             const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
             console.log('Koneksi terputus, mencoba menghubungkan ulang...');
             if (shouldReconnect) startBot();
-        } else if (connection === 'open') {
-            console.log(' Bot Berhasil Terhubung dan Siap Digunakan!');
-        }
+
+} else if (connection === 'open') {
+    console.log(' Bot Berhasil Terhubung dan Siap Digunakan!');
+    startAlerts(sock);
+}
     });
 
     // Pesan masuk diteruskan ke router
     sock.ev.on('messages.upsert', async ({ messages, type }) => {
+console.log('[upsert]', type, 'fromMe=' + messages[0]?.key?.fromMe, messages[0]?.key?.remoteJid);
         if (type !== 'notify') return;
         const m = messages[0];
         if (!m?.message) return;
         const msg = m.message;
         const text = msg.conversation || msg.extendedTextMessage?.text
         || msg.imageMessage?.caption || msg.videoMessage?.caption || '';
-        const isSettingsCmd = /^\.(settings|setting)(\s|$)/i.test(text.trim());
+const isSettingsCmd = /^\.(settings|setting|setgroup)(\s|$)/i.test(text.trim());
 if (text.trim().startsWith('.') && !isSettingsCmd) {
     const botId = (sock.user?.id || '').split(':')[0].split('@')[0];
     const claimOn = settings.option(sock, CLAIM_FILE, 'claim', true);

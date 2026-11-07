@@ -440,4 +440,24 @@ async function handleReply(sock, m, body) {
   return true;
 }
 
-module.exports = { install, show, handleReply, check, scan, option };
+// ---------- daftar grup tujuan alert (per akun bot) ----------
+function getAlertGroups(sock) {
+  const a = dbOf(botId(sock)).__alert || {};
+  const list = a.groups || (a.group ? [a.group] : []); // dukung format lama
+  return list.filter((j) => typeof j === 'string' && j.endsWith('@g.us'));
+}
+function saveAlertGroups(sock, list) {
+  const bot = botId(sock);
+  const d = dbOf(bot);
+  if (list.length) d.__alert = { groups: [...new Set(list)] }; else delete d.__alert;
+  save(bot);
+}
+function addAlertGroup(sock, jid) { saveAlertGroups(sock, [...getAlertGroups(sock), jid]); }
+function removeAlertGroup(sock, jid) {
+  saveAlertGroups(sock, jid ? getAlertGroups(sock).filter((j) => j !== jid) : []); // tanpa jid = hapus semua
+}
+
+module.exports = {
+  install, show, handleReply, check, scan, option,
+  getAlertGroups, addAlertGroup, removeAlertGroup, getRole, canManage, flash,
+};

@@ -1,6 +1,8 @@
 // utils/segdl.js
 // Unduh file dengan beberapa koneksi paralel (HTTP Range), gaya IDM.
 // Segmen yang putus dilanjutkan dari byte terakhir. Hasil: path file sementara.
+// Opsi onProgress({ loaded, total, done }) dipanggil saat data masuk
+// (maks ~3x per detik; total = 0 kalau ukuran tidak diketahui).
 
 const fs = require('fs');
 const os = require('os');
@@ -26,7 +28,7 @@ async function probe(url, headers) {
 }
 
 // Unduh satu segmen, kalau putus lanjut dari posisi terakhir (resume)
-async function getPart(url, headers, start, end, fd, retries = 4) {
+async function getPart(url, headers, start, end, fd, add, retries = 4) {
   let pos = start;
   for (let t = 0; t <= retries; t++) {
     try {
@@ -38,6 +40,7 @@ async function getPart(url, headers, start, end, fd, retries = 4) {
         if (done) break;
         await fd.write(value, 0, value.length, pos);
         pos += value.length;
+        add(value.length);
       }
       if (pos > end) return;
       throw new Error('koneksi terputus');
@@ -49,9 +52,10 @@ async function getPart(url, headers, start, end, fd, retries = 4) {
 }
 
 // Unduhan biasa (server tidak support Range / file kecil)
-async function single(url, headers, fd) {
+async function single(url, headers, fd, add, setTotal) {
   const res = await fetch(url, { headers });
   if (!res.ok) throw new Error('HTTP ' + res.status);
+  setTotal(parseInt(res.headers.get('content-length') || '0', 10) || 0);
   const reader = res.body.getReader();
   let pos = 0;
   while (true) {
@@ -59,31 +63,47 @@ async function single(url, headers, fd) {
     if (done) break;
     await fd.write(value, 0, value.length, pos);
     pos += value.length;
+    add(value.length);
   }
 }
 
 // Return: path file sementara (hapus sendiri setelah dipakai)
-async function segDownload(url, { headers = {}, connections = 4, minSegment = 1024 * 1024 } = {}) {
+async function segDownload(url, { headers = {}, connections = 4, minSegment = 1024 * 1024, onProgress } = {}) {
   headers = { 'User-Agent': UA, ...headers };
   const file = path.join(os.tmpdir(), `smbot-${Date.now()}-${Math.random().toString(36).slice(2)}`);
   const fd = await fs.promises.open(file, 'w+');
+
+  // pelaporan progres (dibatasi supaya tidak dipanggil ratusan kali per detik)
+  const state = { loaded: 0, total: 0, last: 0 };
+  const emit = (done = false) => {
+    if (!onProgress) return;
+    const now = Date.now();
+    if (!done && now - state.last < 300) return;
+    state.last = now;
+    try { onProgress({ loaded: state.loaded, total: state.total, done }); } catch {}
+  };
+  const add = (n) => { state.loaded += n; emit(); };
+
   try {
     const { size, ranges } = await probe(url, headers);
+    state.total = size;
     console.log('[segdl]', { size, ranges });
 
     if (!ranges || size < minSegment * 2) {
-      await single(url, headers, fd);
+      await single(url, headers, fd, add, (t) => { if (!state.total) state.total = t; });
     } else {
       const n = Math.min(connections, Math.floor(size / minSegment));
       const chunk = Math.ceil(size / n);
       await fd.truncate(size);
       await Promise.all(
         Array.from({ length: n }, (_, i) =>
-          getPart(url, headers, i * chunk, Math.min(size - 1, (i + 1) * chunk - 1), fd)
+          getPart(url, headers, i * chunk, Math.min(size - 1, (i + 1) * chunk - 1), fd, add)
         )
       );
     }
     await fd.close();
+    if (!state.total) state.total = state.loaded;
+    emit(true);
     return file;
   } catch (e) {
     await fd.close().catch(() => {});

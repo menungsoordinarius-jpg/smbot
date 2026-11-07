@@ -7,10 +7,17 @@
 // yang putus dilanjutkan dari byte terakhir.
 //
 // Install: npm i btch-downloader   (.npmrc legacy-peer-deps sudah ada)
-// Butuh  : utils/segdl.js dan utils/sendMedia.js
+// Butuh  : utils/segdl.js, utils/sendMedia.js, utils/process.js, utils/react.js
 
 const { igdl } = require('btch-downloader');
 const { sendMediaFile } = require('../../utils/sendMedia');
+const { createProcess } = require('../../utils/process');
+const { withProcessReact } = require('../../utils/react');
+
+// ---------- SETTING (dibaca .settings) ----------
+// Tampilkan pesan proses (bar progres) saat menunggu.
+// Opsi: true | false
+const SETTING_Tampilkan_Proses = true;
 
 const UA =
   'Mozilla/5.0 (Linux; Android 13; SM-A065F) AppleWebKit/537.36 ' +
@@ -219,8 +226,21 @@ module.exports = async function instagram(sock, m, args, mode = 'short') {
   }
 
   const shortcode = match[1];
+  const proc = withProcessReact(
+    createProcess(sock, m, SETTING_Tampilkan_Proses),
+    sock,
+    m
+  );
+
+  // Pesan gagal: kalau proses aktif, edit pesan proses (1 pesan saja);
+  // kalau proses dimatikan, kirim pesan biasa.
+  const gagal = async (teks) => {
+    if (SETTING_Tampilkan_Proses) return proc.fail(teks);
+    return sock.sendMessage(jid, { text: teks }, { quoted: m });
+  };
 
   try {
+    await proc.update('⬇️ Mengambil info dan media...', 20, true);
     const [meta, urls] = await Promise.all([
       fetchMeta(shortcode),
       fetchMedia(match[0]),
@@ -233,21 +253,30 @@ module.exports = async function instagram(sock, m, args, mode = 'short') {
     const text = buildText(meta, mode);
 
     for (let i = 0; i < urls.length; i++) {
+      const from = 50 + (45 * i) / urls.length;
+      const to = 50 + (45 * (i + 1)) / urls.length;
+      const no = `${i + 1}/${urls.length}`;
+      await proc.update(`⬇️ Mengunduh media ${no}`, from, i === 0);
       try {
         // caption hanya di media pertama
-        await sendMediaFile(sock, m, urls[i], { caption: i === 0 ? text : undefined });
+        await sendMediaFile(sock, m, urls[i], {
+          caption: i === 0 ? text : undefined,
+          onProgress: (p) => p.done
+            ? proc.update(`📤 Mengirim media ${no}...`, to, true)
+            : proc.download(`⬇️ Mengunduh media ${no}`, p.loaded, p.total, from, to),
+        });
       } catch (e) {
         // gagal di media pertama = gagal total; di media berikutnya = dilewati
         if (i === 0) throw e;
         console.log(`[instagram] media ${i + 1} gagal, dilewati:`, e.message);
       }
     }
+
+    await proc.done();
+    return true;
   } catch (e) {
     console.log('[instagram] error:', e);
-    await sock.sendMessage(
-      jid,
-      { text: 'Gagal mengunduh. Pastikan postingan publik dan linknya benar.' },
-      { quoted: m }
-    );
+    await gagal('❌ Gagal mengunduh. Pastikan postingan publik dan linknya benar.');
+    return false; // dibaca withReaction -> reaksi akhir ❌
   }
 };

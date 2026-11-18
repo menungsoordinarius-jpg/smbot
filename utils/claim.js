@@ -5,12 +5,19 @@ const path = require('path');
 const LOCK_DIR = path.join(os.tmpdir(), 'smbot-locks');
 fs.mkdirSync(LOCK_DIR, { recursive: true });
 
+// id pesan sama di semua sisi (grup maupun chat pribadi), jadi cukup pakai id
 const fileOf = (m) =>
-    path.join(LOCK_DIR, `${m.key.remoteJid}_${m.key.id}`.replace(/[^\w.@-]/g, '_'));
+    path.join(LOCK_DIR, String(m.key.id).replace(/[^\w.@-]/g, '_'));
 
 // true = bot ini boleh menjawab
-function claim(m, botId, claimOn = true) {
+// force = true: timpa klaim bot lain (dipakai Self ON)
+function claim(m, botId, claimOn = true, force = false) {
     const file = fileOf(m);
+
+    if (force) {
+        try { fs.writeFileSync(file, botId); } catch {}
+        return true;
+    }
 
     if (claimOn) {
         try {
@@ -32,6 +39,12 @@ function claim(m, botId, claimOn = true) {
     }
 }
 
+// true = klaim pesan ini masih milik bot ini (atau belum ada klaim)
+function owns(m, botId) {
+    try { return fs.readFileSync(fileOf(m), 'utf8') === botId; }
+    catch { return true; }
+}
+
 setInterval(() => {
     const now = Date.now();
     for (const f of fs.readdirSync(LOCK_DIR)) {
@@ -42,4 +55,4 @@ setInterval(() => {
     }
 }, 60000).unref();
 
-module.exports = { claim };
+module.exports = { claim, owns };

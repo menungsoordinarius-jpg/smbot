@@ -1,6 +1,6 @@
 'use strict'
 // Command .pixai <deskripsi>
-// Urutan key: donor (sesuai aturan publik/internal + jatah per akun bot)
+// Urutan key: donor (sesuai klaim .claim per orang, internal bebas)
 //             -> key pribadi pengirim (.setkey) -> pesan jatah habis
 
 const km = require('../../utils/keyManager')
@@ -57,6 +57,12 @@ function isMasalahKey(err) {
   )
 }
 
+// Terlalu banyak permintaan (429): donor ditandai merah sementara, bukan key rusak
+function isLimit(err) {
+  const teks = String((err && err.message) || err || '')
+  return /\b429\b|rate.?limit|too many requests|terlalu banyak/i.test(teks)
+}
+
 async function run(ctx) {
   const { sock, msg, from, sender, args, botNumber } = ctx
   const reply = (text) => sock.sendMessage(from, { text }, { quoted: msg })
@@ -71,13 +77,13 @@ async function run(ctx) {
 
   // Tanpa deskripsi: tampilkan bantuan + sisa jatah
   if (!prompt) {
-    const j = km.sisaJatah(SERVICE, botNumber, internal)
+    const j = km.sisaJatah(SERVICE, sender, internal)
     const punya = !!km.keyPengguna(SERVICE, sender)
     return reply(
       '🎨 *PixAI*\n' +
         'Cara pakai: .pixai <deskripsi>\n' +
         'Contoh: .pixai 1girl, white hair, winter\n\n' +
-        `Jatah gratis hari ini: ${j.sisa}/${j.total}\n` +
+        `Jatah donor kamu: ${j.sisa}/${j.total} (klaim lewat .daily)\n` +
         `Key pribadi: ${punya ? 'sudah diatur' : 'belum (kirim .setkey KEY di chat pribadi)'}`
     )
   }
@@ -100,14 +106,19 @@ async function run(ctx) {
     let sumber = ''
 
     // 1) Key donor
-    for (const d of km.kandidatDonor(SERVICE, botNumber, internal)) {
-      km.pakaiJatah(d.id, botNumber) // pesan jatah dulu
+    for (const d of km.kandidatDonor(SERVICE, sender, internal)) {
+      km.pakaiJatah(d.id, sender) // pesan jatah dulu
       try {
         hasil = await generateGambar(prompt, d.key)
         sumber = 'donor'
         break
       } catch (err) {
-        km.kembalikanJatah(d.id, botNumber) // gagal = jatah tidak terpotong
+        km.kembalikanJatah(d.id, sender) // gagal = jatah tidak terpotong
+        if (isLimit(err)) {
+          console.error(`[pixai] donor ${d.id} kena limit:`, err.message)
+          km.tandaiLimit(d.id) // merah di .daily
+          continue // coba donor berikutnya
+        }
         if (isMasalahKey(err)) {
           console.error(`[pixai] donor ${d.id} bermasalah:`, err.message)
           km.tandaiHabis(d.id)
@@ -123,8 +134,9 @@ async function run(ctx) {
       if (!own) {
         await react('❌')
         return reply(
-          '😔 Jatah gratis hari ini sudah habis.\n' +
-            'Mau lanjut? Kirim *.setkey API_KEY_PIXAI_KAMU* di chat pribadi ke bot.'
+          '😔 Belum ada jatah donor yang bisa dipakai.\n' +
+            'Cek *.daily* lalu klaim dengan *.claim <nama donor>*, ' +
+            'atau pasang key sendiri di chat pribadi: *.setkey API_KEY_PIXAI_KAMU*'
         )
       }
       try {
@@ -141,10 +153,10 @@ async function run(ctx) {
       }
     }
 
-    const j = km.sisaJatah(SERVICE, botNumber, internal)
+    const j = km.sisaJatah(SERVICE, sender, internal)
     const info =
       sumber === 'donor'
-        ? `Jatah gratis tersisa: ${j.sisa}/${j.total}`
+        ? `Jatah donor tersisa: ${j.sisa}/${j.total}`
         : 'Memakai key pribadi kamu'
 
     await sock.sendMessage(

@@ -9,7 +9,7 @@
 //   if (await handleAlbum(sock, m)) return;
 
 const { normalizeMessageContent } = require('@whiskeysockets/baileys')
-const { createSticker, DEFAULT_PACK, DEFAULT_AUTHOR } = require('../sticker')
+const { createSticker, DEFAULT_PACK, DEFAULT_AUTHOR } = require('./sticker')
 const { withReaction } = require('../../utils/react')
 
 const MAX_ITEMS = 20 // batas stiker per album

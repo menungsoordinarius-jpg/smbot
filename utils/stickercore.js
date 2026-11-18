@@ -1,7 +1,6 @@
 // utils/stickercore.js - bagian bersama untuk .s (commands/sticker.js) dan .smeme (commands/smeme.js)
 // Baileys + ffmpeg + libwebp (dwebp), tanpa sharp.
-// Font teks meme: <folder bot>/assets/font/fontmeme.ttf (cadangan kalau smeme.js tidak mengirim font)
-// Opsi font per teks dari smeme.js: topFont, bottomFont (path .ttf), topScale, bottomScale (1 = normal)
+// Font teks meme: <folder bot>/assets/font/fontmeme.ttf
 // Butuh: pkg install ffmpeg libwebp   dan   npm i node-webpmux
 
 const { downloadMediaMessage } = require('@whiskeysockets/baileys')
@@ -85,46 +84,17 @@ function wrap(text, max = 18) {
   return lines.join('\n')
 }
 
-// path font untuk filter ffmpeg (titik dua perlu di-escape)
-function fontOpt(fontPath) {
-  const p = fontPath || FONT
-  return p ? `fontfile=${String(p).replace(/:/g, '\\:')}:` : ''
-}
-
-function drawText(file, position, size, margin = 16, fontPath = null) {
+function drawText(file, position, size, margin = 16) {
   const y = position === 'top' ? String(margin) : `h-text_h-${margin}`
+  const font = FONT ? `fontfile=${FONT}:` : ''
   return (
-    `drawtext=${fontOpt(fontPath)}textfile=${file}:expansion=none:fontsize=${size}:` +
+    `drawtext=${font}textfile=${file}:expansion=none:fontsize=${size}:` +
     `fontcolor=white:borderw=2:bordercolor=black:line_spacing=4:` +
     `x=(w-text_w)/2:y=${y}`
   )
 }
 
-// Ukuran teks stiker, diukur dari stiker Shirone bot (canvas 512x512):
-//   tinggi huruf besar ~37px, jarak teks bawah ke tepi ~44px.
-// Dengan font Changa One itu setara fontsize ~60. Font lain punya tinggi huruf
-// berbeda, jadi sesuaikan dengan persen (mis. --anton -10%).
-const STICKER_FONT_SIZE = 60
-const STICKER_MARGIN_BOTTOM = 44
-const STICKER_MARGIN_TOP = 44 // belum diukur dari Shirone, ubah kalau perlu
-const STICKER_TEXT_WIDTH = 470 // lebar area teks (px)
-
-// jumlah huruf per baris supaya teks tidak melebihi lebar stiker
-const charsPerLine = (size) => Math.max(5, Math.floor(STICKER_TEXT_WIDTH / (size * 0.62)))
-
-function buildFilter({
-  full,
-  top,
-  bottom,
-  tmpFiles,
-  animated,
-  alpha,
-  fps,
-  topFont,
-  bottomFont,
-  topScale = 1,
-  bottomScale = 1
-}) {
+function buildFilter({ full, top, bottom, tmpFiles, animated, alpha, fps }) {
   const f = []
   if (alpha) f.push('format=rgba') // input stiker: jaga transparansi
   if (full) {
@@ -135,62 +105,22 @@ function buildFilter({
     f.push('crop=min(iw\\,ih):min(iw\\,ih)')
     f.push('scale=512:512')
   }
-  const items = [
-    ['top', top, topFont, topScale],
-    ['bottom', bottom, bottomFont, bottomScale]
-  ]
-  for (const [pos, text, fontPath, scale] of items) {
+  for (const [pos, text] of [['top', top], ['bottom', bottom]]) {
     if (!text) continue
-    const sc = scale || 1
-    // ukuran dasar disamakan dengan Shirone; persen dari user mengalikan ukuran ini
-    let size = Math.max(8, Math.round(STICKER_FONT_SIZE * sc))
-    let wrapped = wrap(text, charsPerLine(size))
-    // lebih dari 2 baris -> kecilkan sedikit supaya tidak menutupi gambar
-    if (wrapped.split('\n').length > 2) {
-      size = Math.max(8, Math.round(size * 0.77))
-      wrapped = wrap(text, charsPerLine(size))
-    }
+    const wrapped = wrap(text)
     const tf = path.join(os.tmpdir(), `smeme_${Date.now()}_${pos}.txt`)
     fs.writeFileSync(tf, wrapped)
     tmpFiles.push(tf)
-    const margin = pos === 'top' ? STICKER_MARGIN_TOP : STICKER_MARGIN_BOTTOM
-    f.push(drawText(tf, pos, size, margin, fontPath))
+    f.push(drawText(tf, pos, wrapped.split('\n').length > 2 ? 34 : 44))
   }
   return f.join(',')
 }
 
-async function toWebp(
-  input,
-  {
-    animated,
-    full,
-    top,
-    bottom,
-    alpha,
-    fps,
-    inputArgs = [],
-    topFont,
-    bottomFont,
-    topScale,
-    bottomScale
-  }
-) {
+async function toWebp(input, { animated, full, top, bottom, alpha, fps, inputArgs = [] }) {
   const out = path.join(os.tmpdir(), `stk_${Date.now()}.webp`)
   const tmpFiles = [out]
   try {
-    const vf = buildFilter({
-      full,
-      top,
-      bottom,
-      tmpFiles,
-      animated,
-      alpha,
-      fps,
-      topFont,
-      bottomFont,
-      topScale,
-      bottomScale
-    })
+    const vf = buildFilter({ full, top, bottom, tmpFiles, animated, alpha, fps })
     const base = fps || 15
     // kalau file terlalu besar: turunkan kualitas bertahap (fps tetap)
     const tiers = animated
@@ -236,10 +166,7 @@ function probeSize(file) {
 }
 
 // .smeme pada gambar/video/GIF: teks ditempel, hasilnya tetap berupa gambar/video (bukan stiker)
-async function memeMedia(
-  input,
-  { type, top, bottom, topFont, bottomFont, topScale = 1, bottomScale = 1 }
-) {
+async function memeMedia(input, { type, top, bottom }) {
   const isVideo = type === 'video'
   const out = path.join(os.tmpdir(), `meme_${Date.now()}.${isVideo ? 'mp4' : 'jpg'}`)
   const tmpFiles = [out]
@@ -247,22 +174,17 @@ async function memeMedia(
     const { w, h } = await probeSize(input)
     const sw = Math.min(w, 720)
     const sh = Math.round((h * sw) / w)
-    const baseSize = Math.max(18, Math.round(Math.min(sw, sh) / 12))
+    const size = Math.max(18, Math.round(Math.min(sw, sh) / 12))
+    const margin = Math.round(size * 0.35)
+    const maxChars = Math.max(8, Math.floor(sw / (size * 0.68)))
 
     const f = ['scale=trunc(min(iw\\,720)/2)*2:-2']
-    const items = [
-      ['top', top, topFont, topScale],
-      ['bottom', bottom, bottomFont, bottomScale]
-    ]
-    for (const [pos, text, fontPath, scale] of items) {
+    for (const [pos, text] of [['top', top], ['bottom', bottom]]) {
       if (!text) continue
-      const size = Math.max(8, Math.round(baseSize * (scale || 1)))
-      const margin = Math.round(size * 0.35)
-      const maxChars = Math.max(6, Math.floor(sw / (size * 0.68)))
       const tf = path.join(os.tmpdir(), `smemem_${Date.now()}_${pos}.txt`)
       fs.writeFileSync(tf, wrap(text, maxChars))
       tmpFiles.push(tf)
-      f.push(drawText(tf, pos, size, margin, fontPath))
+      f.push(drawText(tf, pos, size, margin))
     }
 
     const args = ['-y', '-i', input, '-vf', f.join(',')]

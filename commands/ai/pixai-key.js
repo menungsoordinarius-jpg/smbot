@@ -1,23 +1,17 @@
 'use strict'
 // Command: .setkey  .delkey  .donor
-// Mendukung beberapa layanan: pixai (bawaan) dan cloudflare.
+// Mendukung banyak layanan; daftarnya di utils/layanan.js (pixai = bawaan).
 // Layanan boleh ditulis di depan; kalau tidak ditulis, dianggap pixai.
 // Semuanya hanya boleh di chat pribadi supaya key tidak terlihat orang lain.
 
 const km = require('../../utils/keyManager')
 
-const DEFAULT_SERVICE = 'pixai'
-const SERVICES = ['pixai', 'cloudflare']
+const LAYANAN = require('../../utils/layanan') // daftar layanan: tambah di file itu saja
 
-// Cara cek format key tiap layanan
-const FORMAT = {
-  pixai: (k) => k.length >= 10 && k.length <= 200,
-  cloudflare: (k) => /^[a-f0-9]{32}:\S{20,150}$/i.test(k),
-}
-const CONTOH = {
-  pixai: 'API_KEY_PIXAI_KAMU',
-  cloudflare: 'ACCOUNT_ID:API_TOKEN',
-}
+const DEFAULT_SERVICE = 'pixai'
+const SERVICES = Object.keys(LAYANAN)
+const FORMAT = Object.fromEntries(SERVICES.map((n) => [n, LAYANAN[n].cek]))
+const CONTOH = Object.fromEntries(SERVICES.map((n) => [n, LAYANAN[n].contoh]))
 
 // Ambil nama layanan kalau kata pertama adalah layanan yang dikenal
 function ambilService(arr) {
@@ -30,9 +24,11 @@ function ambilService(arr) {
   return { service: DEFAULT_SERVICE, sisa: a, eksplisit: false }
 }
 
-// pixai: gabung tanpa spasi. cloudflare: "ID TOKEN" atau "ID:TOKEN" -> "ID:TOKEN"
+// Default: gabung tanpa spasi. Layanan dengan "gabung" (mis. cloudflare ":"):
+// "ID TOKEN" atau "ID:TOKEN" -> "ID:TOKEN"
 function rakitKey(service, sisa) {
-  if (service === 'cloudflare') return sisa.join(':').replace(/:{2,}/g, ':').trim()
+  const g = LAYANAN[service] && LAYANAN[service].gabung
+  if (g) return sisa.join(g).split(g).filter(Boolean).join(g).trim()
   return sisa.join('').trim()
 }
 
@@ -64,8 +60,7 @@ async function setkey(ctx) {
   if (!key) {
     return b.reply(
       'Cara pakai:\n' +
-        '.setkey API_KEY_PIXAI_KAMU\n' +
-        '.setkey cloudflare ACCOUNT_ID:API_TOKEN'
+        SERVICES.map((n) => (n === DEFAULT_SERVICE ? `.setkey ${CONTOH[n]}` : `.setkey ${n} ${CONTOH[n]}`)).join('\n')
     )
   }
   if (!FORMAT[service](key)) {
@@ -90,15 +85,15 @@ async function delkey(ctx) {
 
 const BANTUAN_DONOR =
   '*Pengaturan donor* (khusus pemilik)\n' +
-  'Layanan: pixai (bawaan) atau cloudflare\n' +
+  `Layanan: ${SERVICES.join(', ')} (${DEFAULT_SERVICE} = bawaan)\n` +
   '.donor list [layanan]\n' +
-  '.donor add [layanan] <id> | <key> | <batas per akun bot> | <publik/privat>\n' +
+  '.donor add [layanan] <id> | <key> | <batas per orang per klaim 24 jam> | <publik/privat>\n' +
   '.donor on <id>\n' +
   '.donor off <id>\n' +
   '.donor batas <id> <angka>\n' +
   '.donor del <id>\n\n' +
-  'Contoh cloudflare:\n' +
-  '.donor add cloudflare sanny | ACCOUNT_ID:API_TOKEN | 5 | publik'
+  'Contoh:\n' +
+  `.donor add ${SERVICES[SERVICES.length - 1]} sanny | ${CONTOH[SERVICES[SERVICES.length - 1]]} | 3 | publik`
 
 async function donor(ctx) {
   const { sender, args, isGroup, botNumber } = ctx
@@ -122,14 +117,16 @@ async function donor(ctx) {
         }
         const teks = daftar
           .map((d) => {
-            const status = !d.aktif ? 'nonaktif' : d.istirahat ? 'istirahat (key/kredit bermasalah)' : 'aktif'
-            const pakai =
-              Object.entries(d.terpakaiHariIni)
-                .map(([bot, n]) => `${bot}: ${n}`)
-                .join(', ') || '-'
+            const status = !d.aktif
+              ? 'nonaktif'
+              : d.istirahat
+                ? 'istirahat (key/kredit bermasalah)'
+                : d.limit
+                  ? '🔴 kena limit'
+                  : 'aktif'
             return (
-              `• *${d.id}* — ${d.publik ? 'publik' : 'privat'}, batas ${d.batasPerAkunBot}/akun bot, ${status}\n` +
-              `  key: ${d.key}\n  terpakai hari ini: ${pakai}`
+              `• *${d.id}* — ${d.publik ? 'publik' : 'privat'}, batas ${d.batas}x/orang per klaim, ${status}\n` +
+              `  key: ${d.key}\n  klaim aktif: ${d.klaimAktif} orang`
             )
           })
           .join('\n')
@@ -151,7 +148,7 @@ async function donor(ctx) {
       } catch (e) {
         return b.reply(e.message)
       }
-      return b.reply(`✅ Donor ${service} *${id}* ditambahkan (${mode.toLowerCase()}, batas ${batas}/akun bot).`)
+      return b.reply(`✅ Donor ${service} *${id}* ditambahkan (${mode.toLowerCase()}, batas ${batas}x/orang per klaim).`)
     }
 
     case 'on':
@@ -169,9 +166,10 @@ async function donor(ctx) {
       const batas = parseInt(n, 10)
       if (!id || !Number.isInteger(batas) || batas < 1 || batas > 100) return b.reply('Cara pakai: .donor batas <id> <1-100>')
       const ok = km.ubahDonor(id, (d) => {
-        d.batasPerAkunBot = batas
+        d.batasKlaim = batas
+        delete d.batasPerAkunBot
       })
-      return b.reply(ok ? `Batas donor *${id}* jadi ${batas}/akun bot.` : 'ID donor tidak ditemukan.')
+      return b.reply(ok ? `Batas donor *${id}* jadi ${batas}x/orang per klaim.` : 'ID donor tidak ditemukan.')
     }
 
     case 'del': {

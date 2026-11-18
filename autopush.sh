@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 cd "$(dirname "$0")" || exit 1
 
 EXCL='(^|/)(\.git|node_modules|session[^/]*)(/|$)|autopush\.log|/tmp_|\.swp$|\.save$|~$'

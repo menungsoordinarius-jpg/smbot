@@ -1,12 +1,11 @@
 node_modules/
 session/
+session_*/
+sessions/
+data/
 temp_*.mp4
 *.save
 *.log
-session/
-session_*/
-data/
-session_*/
 k.txt
 test.mp4
 .env

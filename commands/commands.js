@@ -11,8 +11,10 @@ const { handleDev, handleAdmin } = require('./devSettings');
 const handleMenu = require('./menu');
 const tes = require('./tes');
 const status = require('./status');
+// tools
+const figlet = require('./tools/figlet');
 // sticker
-const { handleSticker } = require('./sticker');
+const { handleSticker } = require('./sticker/sticker');
 const { handleSmeme } = require('./sticker/smeme');
 const { handleAlbum } = require('./sticker/stickerpack');
 //converter
@@ -22,6 +24,7 @@ const toimage = require('./converter/toimage');
 const { handleYtmp4, handleYtReply } = require('./downloader/ytmp4');
 const xDownloader = require('./downloader/x/x')
 const instagram = require('./downloader/instagram');
+const play = require('./downloader/play');
 // search
 const { handlePin } = require('./pin');
 const instagramSearch = require('./search/instagram-search');
@@ -30,7 +33,9 @@ const { pixivCommand } = require('./search/pixiv');
 const gemini = require('./ai/gemini')
 const pixai = require('./ai/pixai')
 const flux = require('./ai/flux');
+const songCmd = require('./ai/song')
 const { setkey, delkey, donor } = require('./ai/pixai-key');
+const claimCmd = require('./ai/donor-claim');
 
 const handleTranslate = require('./translate');
 const handleViewOnce = require('./viewonce');
@@ -90,14 +95,24 @@ module.exports = async function handleCommands(sock, m) {
     }
     // ai
     else if (/^\.ai(\s|$)/i.test(text)) {
+    console.log('[figlet] masuk:', text);
         await run(() => gemini.command(sock, m, cmdArgs), '🤖');
     }
     else if (/^\.pixai(\s|$)/i.test(text)) {
         await pixai.command(sock, m, cmdArgs);
     }
+   else if (/^\.song(\s|$)/i.test(text)) {
+        await run(() => songCmd(sock, m, cmdArgs), '🎵');
+    }
     else if (/^\.flux(\s|$)/i.test(text)) {
         await run(() => flux(sock, m, cmdArgs), '🎨');
     }
+    else if (/^\.daily(\s|$)/i.test(text)) {
+    await run(() => claimCmd.daily(sock, m, cmdArgs), '📅');
+}
+else if (/^\.claim(\s|$)/i.test(text)) {
+    await run(() => claimCmd.claim(sock, m, cmdArgs), '🎁');
+}
     // key (donor & pribadi)
     else if (/^\.setkey(\s|$)/i.test(text)) {
         await setkey(sock, m, cmdArgs);
@@ -108,7 +123,10 @@ module.exports = async function handleCommands(sock, m) {
     else if (/^\.donor(\s|$)/i.test(text)) {
         await donor(sock, m, cmdArgs);
     }
-    // alat
+    // tools
+    else if (/^\.(figlet|big)(\s|$)/i.test(text)) {
+        await run(() => figlet(sock, m, text), '🔠');
+    }
     else if (text.startsWith('.tr ')) {
         await run(() => handleTranslate(sock, from, m, text));
     }
@@ -138,6 +156,9 @@ module.exports = async function handleCommands(sock, m) {
     else if (/^\.(x|𝕏|twitter)(\s|$)/i.test(text)) {
         const isDetail = /^\.(𝕏|twitter)/i.test(text);
         await run(() => xDownloader(sock, m, cmdArgs, isDetail), '🔎');
+    }
+    else if (/^\.play(\s|$)/i.test(text)) {
+        await run(() => play(sock, m, cmdArgs), '🎵');
     }
     // pencarian
     else if (/^\.pin(\s|$)/i.test(text)) {

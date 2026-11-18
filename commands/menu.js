@@ -1,25 +1,26 @@
 // commands/menu2.js
-// Kartu preview besar dengan gambar ACAK + menu.
-// Tidak lagi pakai getUrlInfo: judul, deskripsi, dan gambar diatur dari sini,
-// jadi tidak perlu link-preview-js dan tidak perlu tag og: di halaman.
+// Kartu preview besar dengan gambar ACAK dari folder lokal + menu.
 
+const fs = require("fs");
+const path = require("path");
 const Jimp = require("jimp"); // 0.22.12
 const { getSettings } = require("./devSettings"); // SATU_PESAN, SEMBUNYIKAN_LINK, PAKAI_READ_MORE (diubah lewat .dev)
+const { createProcess } = require("../utils/process");
+const { withProcessReact } = require("../utils/react");
+
+// Tampilkan pesan proses (bar progres) saat menunggu.
+// Opsi: true | false
+const SETTING_Tampilkan_Proses = true;
 
 const LINK = "https://menungsoordinarius-jpg.github.io/smbot/"; // domain yang tampil di kartu
 
 // Trik "Read more" WhatsApp: ribuan karakter tak terlihat
 const READ_MORE = String.fromCharCode(8206).repeat(4001);
 
-// ---- Gambar otomatis dari folder images di GitHub ----
-// Bot membaca isi folder lewat GitHub API, jadi tinggal upload gambar baru
-// ke folder itu tanpa mengedit kode. Hasilnya di-cache 10 menit.
-const GH_OWNER = "menungsoordinarius-jpg";
-const GH_REPO = "smbot";
-const GH_PATH = "images"; // kalau Pages kamu dari folder docs -> "docs/images"
-const CACHE_MS = 10 * 60 * 1000;
+// ---- Pembacaan folder lokal ../images ----
+const LOCAL_IMAGES_DIR = path.join(__dirname, "../images");
 
-// Cadangan kalau GitHub API gagal / kena limit dan cache masih kosong
+// Cadangan kalau folder lokal kosong / gagal dibaca
 const FALLBACK_IMAGES = [LINK + "images/2.jpg"];
 
 // Judul + deskripsi diacak terpisah dari gambar. Tambah/ubah sesukamu.
@@ -29,28 +30,22 @@ const TEXTS = [
   { title: "One Fine Day",  body: "Just enjoying the little things." },
 ];
 
-let cache = { time: 0, list: [] };
 let lastUrl = "";
 
 async function listImages() {
-  if (cache.list.length && Date.now() - cache.time < CACHE_MS) return cache.list;
   try {
-    const res = await fetch(
-      `https://api.github.com/repos/${GH_OWNER}/${GH_REPO}/contents/${GH_PATH}`,
-      { headers: { "User-Agent": "smbot", Accept: "application/vnd.github+json" } }
-    );
-    if (!res.ok) throw new Error("GitHub API " + res.status);
-    const files = await res.json();
-    const list = files
-      .filter((f) => f.type === "file" && /\.(jpe?g|png)$/i.test(f.name))
-      .map((f) => f.download_url);
-    if (!list.length) throw new Error("folder kosong / tidak ada jpg/png");
-    cache = { time: Date.now(), list };
-    console.log("[menu2] daftar gambar diperbarui:", list.length, "file");
+    if (!fs.existsSync(LOCAL_IMAGES_DIR)) {
+      throw new Error("Folder tidak ditemukan: " + LOCAL_IMAGES_DIR);
+    }
+    const list = fs.readdirSync(LOCAL_IMAGES_DIR)
+      .filter((f) => /\.(jpe?g|png)$/i.test(f))
+      .map((f) => path.join(LOCAL_IMAGES_DIR, f));
+
+    if (!list.length) throw new Error("tidak ada jpg/png di folder");
     return list;
   } catch (e) {
-    console.error("[menu2] gagal baca folder gambar:", e.message);
-    return cache.list.length ? cache.list : FALLBACK_IMAGES; // pakai cache lama kalau ada
+    console.error("[menu2] gagal baca folder lokal:", e.message);
+    return FALLBACK_IMAGES;
   }
 }
 
@@ -84,12 +79,16 @@ function formatRuntime(sec) {
   return `${m}m ${Math.floor(sec % 60)}d`;
 }
 
+
 function buildMenu(m, pakaiReadMore) {
   const user = m?.pushName || "User";
-  return `*MENU 2*
+  const teks = `*MENU 2*
+╭─〔 SM-BOT〕
+╰─────────────────
 ╭─〔 INFO 〕
 │  User: ${user}
 │  Runtime: ${formatRuntime(process.uptime())}
+│  Total cmd: {{TOTAL}}
 ╰─────────────────${pakaiReadMore ? READ_MORE : ""}
 ╭─〔 TRANSLATE 〕
 │  .tr in/id  → Indonesia
@@ -112,9 +111,14 @@ function buildMenu(m, pakaiReadMore) {
 ╰─────────────────
 ╭─〔 SEARCH 〕
 │  .pinterest
+│  .pixiv
 ╰─────────────────
 ╭─〔 SCANNER 〕
 │  .ocr
+╰─────────────────
+╭─〔 AI 〕
+│  .flux
+│  .pixai  upcoming
 ╰─────────────────
 ╭─〔 GENERAL 〕
 │  .menu
@@ -125,21 +129,33 @@ function buildMenu(m, pakaiReadMore) {
 ╰─────────────────
 
 > ╭─〔 UPCOMING 〕
-> │  .pixiv
 > │  .youtube shorts
 > │  .pinterest video
 > │  .aichara
-> │  .aichat> gemini, chatgpt, claude, DeepSeek, DLL
+> │  .aichat> gemini, chatgpt, DeepSeek, DLL
 > ╰────────────────`;
+
+  // hitung otomatis: perintah unik di daftar menu (baris "│  .perintah"), kecuali yang bertanda upcoming
+  const daftar = new Set();
+  for (const baris of teks.split("\n")) {
+    const mt = baris.match(/^│  (\.\S+)/);
+    if (mt && !/upcoming/i.test(baris)) daftar.add(mt[1].toLowerCase());
+  }
+  return teks.replace("{{TOTAL}}", daftar.size);
 }
 
 // Unduh gambar -> perkecil -> unggah ke server WhatsApp sebagai "thumbnail-link".
 // Ukuran & thumbnail kecil diisi sendiri dari Jimp, karena Baileys 7 di Termux
 // tidak mengisinya (tidak ada sharp/jimp bawaan).
 async function buildPreview(sock, item) {
+let img;
+if (/^https?:\/\//i.test(item.url)) {
   const res = await fetch(item.url);
   if (!res.ok) throw new Error(`gambar gagal (${res.status}): ${item.url}`);
-  const img = await Jimp.read(Buffer.from(await res.arrayBuffer()));
+  img = await Jimp.read(Buffer.from(await res.arrayBuffer()));
+} else {
+  img = await Jimp.read(fs.readFileSync(item.url));
+}
 
   const big = img.clone().scaleToFit(1000, 1000).quality(80);
   const bigBuf = await big.getBufferAsync(Jimp.MIME_JPEG);
@@ -174,22 +190,46 @@ async function buildPreview(sock, item) {
 module.exports = async (sock, from, m) => {
   // dibaca tiap pesan -> perubahan lewat .dev langsung berlaku tanpa restart
   const { SATU_PESAN, SEMBUNYIKAN_LINK, PAKAI_READ_MORE } = getSettings();
-  const item = await pickRandom();
-  console.log("[menu2] gambar:", item.url);
 
-  let linkPreview;
+  // ---------- pesan proses ----------
+  const proc = withProcessReact(
+    createProcess(sock, m, SETTING_Tampilkan_Proses),
+    sock,
+    m
+  );
+  const gagal = async (teks) =>
+    SETTING_Tampilkan_Proses
+      ? proc.fail(teks)
+      : sock.sendMessage(from, { text: teks }, { quoted: m });
+
   try {
-    linkPreview = await buildPreview(sock, item);
-  } catch (e) {
-    console.error("[menu2] gagal bikin preview:", e.message);
-  }
+    await proc.update("📋 Menyiapkan menu...", 15, true);
+    const item = await pickRandom();
+    console.log("[menu2] gambar:", item.url);
 
-  if (SATU_PESAN) {
-    const text = SEMBUNYIKAN_LINK ? buildMenu(m, PAKAI_READ_MORE) : buildMenu(m, PAKAI_READ_MORE) + "\n\n" + LINK;
-    await sock.sendMessage(from, { text, linkPreview }, { quoted: m });
-  } else {
-    await sock.sendMessage(from, { text: LINK, linkPreview }, { quoted: m });
-    await sock.sendMessage(from, { text: buildMenu(m, PAKAI_READ_MORE) });
+    await proc.update("🖼️ Membuat preview gambar...", 50, true);
+    let linkPreview;
+    try {
+      linkPreview = await buildPreview(sock, item);
+    } catch (e) {
+      console.error("[menu2] gagal bikin preview:", e.message); // menu tetap dikirim tanpa preview
+    }
+
+    await proc.update("📤 Mengirim menu...", 90, true);
+    if (SATU_PESAN) {
+      const text = SEMBUNYIKAN_LINK ? buildMenu(m, PAKAI_READ_MORE) : buildMenu(m, PAKAI_READ_MORE) + "\n\n" + LINK;
+      await sock.sendMessage(from, { text, linkPreview }, { quoted: m });
+    } else {
+      await sock.sendMessage(from, { text: LINK, linkPreview }, { quoted: m });
+      await sock.sendMessage(from, { text: buildMenu(m, PAKAI_READ_MORE) });
+    }
+    console.log("[menu2] terkirim | satuPesan:", SATU_PESAN, "| linkTersembunyi:", SEMBUNYIKAN_LINK, "| readMore:", PAKAI_READ_MORE);
+
+    await proc.done();
+    return true;
+  } catch (e) {
+    console.error("[menu2] error:", e.message);
+    await gagal("❌ Gagal menampilkan menu, coba lagi.");
+    return false; // dibaca withReaction -> reaksi akhir ❌
   }
-  console.log("[menu2] terkirim | satuPesan:", SATU_PESAN, "| linkTersembunyi:", SEMBUNYIKAN_LINK, "| readMore:", PAKAI_READ_MORE);
 };

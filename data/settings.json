@@ -1,6 +1,6 @@
 {
   "SATU_PESAN": true,
-  "SEMBUNYIKAN_LINK": true,
-  "PAKAI_READ_MORE": true,
+  "SEMBUNYIKAN_LINK": false,
+  "PAKAI_READ_MORE": false,
   "ADMINS": []
 }
